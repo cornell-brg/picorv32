@@ -1,0 +1,17 @@
+#=========================================================================
+# Modular C++ Build System Subproject Makefile Fragment
+#=========================================================================
+# Please read the documenation in 'mcppbs-uguide.txt' for more details
+# on how the Modular C++ Build System works.
+
+cgra_ubmark_intdeps  = @cgra_ubmark_intdeps@
+cgra_ubmark_cppflags = @cgra_ubmark_cppflags@
+cgra_ubmark_ldflags  = @cgra_ubmark_ldflags@
+cgra_ubmark_libs     = @cgra_ubmark_libs@
+
+cgra_ubmark_hdrs = \
+
+cgra_ubmark_srcs = \
+
+cgra_ubmark_install_prog_srcs = \
+  cgra_ubmark-fir.c
