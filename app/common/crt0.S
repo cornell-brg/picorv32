@@ -44,6 +44,8 @@ _start:
   addi  t0, zero, 0
   lui   t0, 512
   /* csrr  t1, 0xF14 */
+  # Peitian: I changed this line because PicoRV32 does not support
+  # CSR instructions. Since this is a single core so HART is always 0.
   lui   t1, 0
   mul   t2, t0, t1
   sub   sp, sp, t2

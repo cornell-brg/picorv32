@@ -50,7 +50,7 @@ class PicoTestMemoryRTL( Component ):
 
       if s.valid and not s.ready:
         s.ready <<= Bits1(1)
-        if s.addr < (1 << 16):
+        if s.addr < mem_nbytes:
           # Memory read
           s.rdata <<= s.memory.read(s.addr, 4)
           # Memory write
@@ -68,7 +68,7 @@ class PicoTestMemoryRTL( Component ):
 
         elif s.addr == 0x10000000:
           # Handle PicoRV32 control instructions
-          print(f'DEBUG: n_fail_msgs = {s.n_fail_msgs}')
+          # print(f'DEBUG: n_fail_msgs = {s.n_fail_msgs}')
           if s.n_fail_msgs == 1:
             s.fail_index <<= s.wdata
             s.n_fail_msgs <<= s.n_fail_msgs + 1
@@ -79,7 +79,7 @@ class PicoTestMemoryRTL( Component ):
             print('PICO_CTRL: received failed test message 3!')
           elif s.n_fail_msgs == 3:
             s.fail_ref <<= s.wdata
-            raise TestFailError(f'PICO_CTRL: [FAILED] dest[{s.fail_index}] != dest[{s.fail_index}] ({s.fail_value} != {s.wdata})')
+            raise TestFailError(f'PICO_CTRL: [FAILED] dest[{s.fail_index}] != ref[{s.fail_index}] ({s.fail_value} != {s.wdata})')
             print('PICO_CTRL: received failed test message 4!')
           elif s.wdata == 0x00020001:
             s.n_fail_msgs <<= b32(1)
@@ -90,6 +90,9 @@ class PicoTestMemoryRTL( Component ):
           elif s.wdata == 0x00020000:
             print(f'PICO_CTRL: [PASSED]')
             sys.exit()
+
+        else:
+          raise TestFailError(f'Test memory: invalid address {s.addr}!')
 
   def line_trace( s ):
     trace = ''
@@ -109,7 +112,7 @@ class PicoTestMemoryRTL( Component ):
     return f'{trace:>40}'
 
 class TestHarness( Component ):
-  def construct( s, mem_nbytes = 1 << 16 ):
+  def construct( s, mem_nbytes = 1 << 28 ):
     s.dut = PicoRV32()
     s.mem = PicoTestMemoryRTL( mem_nbytes )
 
@@ -140,12 +143,12 @@ class TestHarness( Component ):
     return s.mem.line_trace()
 
 def test_simple():
-  def fill_mem( mem, data ):
+  def fill_mem( mem, data, start ):
     for i, d in enumerate(data):
-      mem[4*i    ] =  d & 0xFF
-      mem[4*i + 1] = (d & 0xFF00)     >> 8
-      mem[4*i + 2] = (d & 0xFF0000)   >> 16
-      mem[4*i + 3] = (d & 0xFF000000) >> 24
+      mem[start + 4*i    ] =  d & 0xFF
+      mem[start + 4*i + 1] = (d & 0xFF00)     >> 8
+      mem[start + 4*i + 2] = (d & 0xFF0000)   >> 16
+      mem[start + 4*i + 3] = (d & 0xFF000000) >> 24
 
   th = TestHarness()
   th.elaborate()
@@ -160,7 +163,7 @@ def test_simple():
     0x00110113, #       addi    x2,x2,1
     0x0020a023, #       sw      x2,0(x1)
     0xff5ff06f, #       j       <loop>
-  ] )
+  ], 0x200 )
 
   T, maxT = 0, 80
 

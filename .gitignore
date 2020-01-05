@@ -35,4 +35,4 @@
 /synth.log
 /synth.v
 .*.swp
-build
+build*
