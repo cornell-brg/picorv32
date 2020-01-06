@@ -14,6 +14,17 @@ from pymtl3.passes.backends.sverilog import ImportPass
 from pymtl3.stdlib.fl import MemoryFL
 from pymtl3.stdlib.rtl.enrdy_queues import PipeQueue1RTL
 
+# Import PyH2HP
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from hypothesis import Phase
+
+from proc.test import inst_random
+from proc.test.harness import assemble
+from proc.test.harness import TestHarness as RefTestHarness
+from proc.ProcFLGolden import ProcFL
+
 from .elf import elf_reader
 from ..PicoRV32 import PicoRV32
 
@@ -38,6 +49,9 @@ class PicoTestMemoryRTL( Component ):
     s.fail_index = Wire(Bits32)
     s.fail_value = Wire(Bits32)
     s.fail_ref = Wire(Bits32)
+
+    s.n_arch_dump = 0
+    s.arch_dump = [ 0 for _ in range(31) ]
 
     @s.update_ff
     def pico_test_mem_upblk():
@@ -91,8 +105,19 @@ class PicoTestMemoryRTL( Component ):
             print(f'PICO_CTRL: [PASSED]')
             sys.exit()
 
+        elif s.addr == 0x20000000:
+          # Architectural state dump
+          s.update_architectural_state( s.wdata )
+          if s.n_arch_dump == 31:
+            # All architectural states are dumped, exit program
+            sys.exit()
+
         else:
           raise TestFailError(f'Test memory: invalid address {s.addr}!')
+
+  def update_architectural_state( s, data ):
+    s.arch_dump[ s.n_arch_dump ] = data
+    s.n_arch_dump += 1
 
   def line_trace( s ):
     trace = ''
@@ -141,6 +166,26 @@ class TestHarness( Component ):
 
   def line_trace( s ):
     return s.mem.line_trace()
+
+def check_architectural_states( th, ref, addr_list = [] ):
+  pico_mem = th.mem
+
+  # Check register x0 ~ x30
+  pico_regs = pico_mem.arch_dump
+  ref_regs = ref.proc.R
+  print()
+  print('Comparing architectural states of the processor under test and the ISA simulator...')
+  for i in range(31):
+    assert pico_regs[i] == ref_regs[i]
+    print(f'pico_regs[{i:>2}] == ref_regs[{i:>2}] == {pico_regs[i]}')
+
+  # Check memory content
+  print()
+  pico_ram = pico_mem.memory.mem
+  ref_ram = ref.mem.mem.mem
+  for i in addr_list:
+    assert pico_ram[i] == ref_ram[i]
+    print(f'pico_ram[{i:>8}] == ref_ram[{i:>8}] == {pico_ram[i]}')
 
 def test_simple():
   def fill_mem( mem, data, start ):
@@ -202,3 +247,132 @@ def test_ubmark( ubmark ):
 
   except SystemExit:
     pass
+
+def test_simple_reference():
+  tests = [
+      'lui x1, 0x42',
+      '# END OF PROGRAM',
+      'lui x31, 0x20000',
+  ] + [ f'sw x{i}, 0(x31)' for i in range(31) ]
+  vanilla_tests = []
+  for _test in tests:
+    if _test.startswith("# END OF PROGRAM"):
+      break
+    else:
+      vanilla_tests.append( _test )
+  # Send message to test sink to terminate the test
+  vanilla_tests.append('csrw proc2mngr, x0 > 0x00000000')
+  test = '\n'.join( tests )
+  vanilla_test = '\n'.join( vanilla_tests )
+
+  # 1MB test memory
+  th = TestHarness( 1 << 20 )
+  th.elaborate()
+
+  ref = RefTestHarness( ProcFL )
+  ref.elaborate()
+
+  mem_image = assemble( test )
+  th.load( mem_image )
+
+  vanilla_mem_image = assemble( vanilla_test )
+  ref.load( vanilla_mem_image )
+
+  th.apply( ImportPass() )
+  th.apply( SimulationPass() )
+  ref.apply( SimulationPass() )
+
+  T, maxT = 0, 40000
+
+  try:
+
+    print()
+    print('DUT processor')
+    th.sim_reset()
+    while T < maxT:
+      print(f'{T:>4}: {th.line_trace()}')
+      th.tick()
+      T += 1
+
+  except SystemExit:
+    pass
+
+  print()
+  print('Reference processor')
+  ref.sim_reset()
+  while not ref.done() and T < maxT:
+    print(f'{T:>4}: {ref.line_trace()}')
+    ref.tick()
+    T += 1
+
+  check_architectural_states( th, ref )
+
+# IUT: Instructions under test
+@settings( deadline = None )
+@given( IUT =inst_random.inst_combined( 10 ) )
+def test_hypothesis( IUT ):
+  tests, addr_list = IUT
+  vanilla_tests = []
+  for _test in tests:
+    if _test.startswith("# END OF PROGRAM"):
+      break
+    else:
+      vanilla_tests.append( _test )
+
+  print()
+  print('========== Current Hypothesis Test Case =========')
+
+  # Dump the generated instruction sequence
+  print()
+  print('/**** Generated Instruction Sequence ****/')
+  print('\n'.join(map(lambda x: '  '+x, vanilla_tests)))
+  print()
+  print('/**** Address List ****/')
+  print(addr_list)
+  print()
+  # Send message to test sink to terminate the test
+  vanilla_tests.append('csrw proc2mngr, x0 > 0x00000000')
+  test = '\n'.join( tests )
+  vanilla_test = '\n'.join( vanilla_tests )
+
+  th = TestHarness()
+  th.elaborate()
+
+  ref = RefTestHarness( ProcFL )
+  ref.elaborate()
+
+  mem_image = assemble( test )
+  th.load( mem_image )
+
+  vanilla_mem_image = assemble( vanilla_test )
+  ref.load( vanilla_mem_image )
+
+  th.apply( ImportPass() )
+  th.apply( SimulationPass() )
+  ref.apply( SimulationPass() )
+
+  T, maxT = 0, 40000
+
+  try:
+
+    # print()
+    # print('DUT processor')
+    th.sim_reset()
+    while T < maxT:
+      # print(f'{T:>4}: {th.line_trace()}')
+      th.tick()
+      T += 1
+
+  except SystemExit:
+    pass
+
+  # print()
+  # print('Reference processor')
+  T = 0
+  ref.sim_reset()
+  while not ref.done() and T < maxT:
+    # print(f'{T:>4}: {ref.line_trace()}')
+    ref.tick()
+    T += 1
+
+  check_architectural_states( th, ref, addr_list )
