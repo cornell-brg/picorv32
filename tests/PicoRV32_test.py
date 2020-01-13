@@ -6,6 +6,8 @@
 # Author : Peitian Pan
 # Date   : Dec 30, 2019
 
+from copy import copy
+
 import sys
 import pytest
 
@@ -14,13 +16,23 @@ from pymtl3.passes.backends.sverilog import ImportPass
 from pymtl3.stdlib.fl import MemoryFL
 from pymtl3.stdlib.rtl.enrdy_queues import PipeQueue1RTL
 
+#***********************
 # Import PyH2HP
+#***********************
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis import Phase
 
-from proc.test import inst_random
+# Hypothesis
+from proc.test.inst_random import inst_combined as inst_hypothesis
+
+# CRT
+from proc.test.inst_randint import multipick as inst_random
+
+# IDT
+from proc.test.inst_deepening import inst_deepening_gen
+
 from proc.test.harness import assemble
 from proc.test.harness import TestHarness as RefTestHarness
 from proc.ProcFLGolden import ProcFL
@@ -28,9 +40,36 @@ from proc.ProcFLGolden import ProcFL
 from .elf import elf_reader
 from ..PicoRV32 import PicoRV32
 
+#-------------------------------------------------------------------------
+# Parameters
+#-------------------------------------------------------------------------
+
+# Max cycle count
+maxT = 400000
+
+# Min instruction count
+minInstr = 2
+
+# Max instruction count
+maxInstr = 100
+
+# Min number of registers
+minReg = 2
+
+# Max number of registers
+maxReg = 31
+
+#-------------------------------------------------------------------------
+# Errors
+#-------------------------------------------------------------------------
+
 class TestFailError( Exception ):
   def __init__( s, msg ):
     return super().__init__( msg )
+
+#-------------------------------------------------------------------------
+# Components
+#-------------------------------------------------------------------------
 
 class PicoTestMemoryRTL( Component ):
   def construct( s, mem_nbytes ):
@@ -113,6 +152,7 @@ class PicoTestMemoryRTL( Component ):
             sys.exit()
 
         else:
+          import pdb;pdb.set_trace()
           raise TestFailError(f'Test memory: invalid address {s.addr}!')
 
   def update_architectural_state( s, data ):
@@ -167,6 +207,84 @@ class TestHarness( Component ):
   def line_trace( s ):
     return s.mem.line_trace()
 
+#-------------------------------------------------------------------------
+# Helper functions
+#-------------------------------------------------------------------------
+
+def simulate_pico_processor( tests, addr_list ):
+  # Add epilogue to the assembly
+  tests = copy( tests )
+  tests.append( '# END OF PROGRAM' )
+  tests.append( '# Epilogue:' )
+  tests.append( 'lui x31, 0x20000' )
+  for i in range(31):
+    tests.append(f'sw x{i}, 0(x31)')
+
+  # Test program
+  test = '\n'.join( tests )
+
+  # 1MB test memory
+  th = TestHarness( 1 << 20 )
+  th.elaborate()
+
+  mem_image = assemble( test )
+  th.load( mem_image )
+
+  th.apply( ImportPass() )
+  th.apply( SimulationPass() )
+
+  T = 0
+
+  try:
+    # print()
+    # print('DUT processor')
+    T = 0
+    th.sim_reset()
+    while T < maxT:
+      # print(f'{T:>4}: {th.line_trace()}')
+      th.tick()
+      T += 1
+
+  except SystemExit:
+    pass
+
+  return th
+
+def simulate_reference_processor( tests, addr_list ):
+  # Dump the generated instruction sequence
+  print()
+  print('/**** Generated Instruction Sequence ****/')
+  print(f'Number of instructions = {len(tests)}')
+  print('\n'.join(map(lambda x: '  '+x, tests)))
+  print()
+  print('/**** Address List ****/')
+  print(addr_list)
+  print()
+
+  # Send message to test sink to terminate the test
+  tests = copy( tests )
+  tests.append('csrw proc2mngr, x0 > 0x00000000')
+  test = '\n'.join( tests )
+
+  ref = RefTestHarness( ProcFL )
+  ref.elaborate()
+
+  mem_image = assemble( test )
+  ref.load( mem_image )
+  ref.apply( SimulationPass() )
+
+  T = 0
+
+  # print()
+  # print('Reference processor')
+  ref.sim_reset()
+  while not ref.done() and T < maxT:
+    # print(f'{T:>4}: {ref.line_trace()}')
+    ref.tick()
+    T += 1
+
+  return ref
+
 def check_architectural_states( th, ref, addr_list = [] ):
   pico_mem = th.mem
 
@@ -176,16 +294,32 @@ def check_architectural_states( th, ref, addr_list = [] ):
   print()
   print('Comparing architectural states of the processor under test and the ISA simulator...')
   for i in range(31):
-    assert pico_regs[i] == ref_regs[i]
-    print(f'pico_regs[{i:>2}] == ref_regs[{i:>2}] == {pico_regs[i]}')
+    if pico_regs[i] != ref_regs[i]:
+      print(f'pico_regs[{i:>2}] ({pico_regs[i]}) != ref_regs[{i:>2}] ({ref_regs[i]})')
+      print('  [FAILED]')
+      assert pico_regs[i] == ref_regs[i]
+    else:
+      # print(f'pico_regs[{i:>2}] == ref_regs[{i:>2}] == {pico_regs[i]}')
+      pass
 
   # Check memory content
   print()
   pico_ram = pico_mem.memory.mem
   ref_ram = ref.mem.mem.mem
   for i in addr_list:
-    assert pico_ram[i] == ref_ram[i]
-    print(f'pico_ram[{i:>8}] == ref_ram[{i:>8}] == {pico_ram[i]}')
+    if pico_ram[i] != ref_ram[i]:
+      print(f'pico_ram[{i:>8}] (pico_ram[i]) != ref_ram[{i:>8}] ({ref_ram[i]})')
+      print('  [FAILED]')
+      assert pico_ram[i] == ref_ram[i]
+    else:
+      # print(f'pico_ram[{i:>8}] == ref_ram[{i:>8}] == {pico_ram[i]}')
+      pass
+
+  print('  [PASSED]')
+
+#-------------------------------------------------------------------------
+# Tests
+#-------------------------------------------------------------------------
 
 def test_simple():
   def fill_mem( mem, data, start ):
@@ -250,129 +384,94 @@ def test_ubmark( ubmark ):
 
 def test_simple_reference():
   tests = [
-      'lui x1, 0x42',
+      # 'lui x1, 0x42',
+      'sub x31, x31, x31',
+      'addi x31, x31, 0x5c06',
+      'srli x31, x31, 0xffff',
+      'addi x31, x31, 0xffff',
+      'add x31, x31, x31',
+      'auipc x31, 0x997c',
+      'sll x31, x31, x31',
+      'addi x31 x0 7',
+      'lw  x31 33(x31)',
+      'ori x31, x31, 0x83c6',
+      'bge x31, x31, 32',
+      'blt x31, x31, 64',
+      'slti x31, x31, 0x922f',
+      'lui x31, 0xb901',
+      'bgeu x31, x31, 60',
+      'lui x31, 0xc550',
+      'ori x31, x31, 0xd847',
+      'slt x31, x31, x31',
+      'addi x31, x31, 0xe7bf',
+      'auipc x31, 0x7b21',
+      'blt x31, x31, 8',
+      'addi x31, x31, 0xe23',
+      'bge x31, x31, 36',
+      'or x31, x31, x31',
+      'blt x31, x31, 4',
+      'lui x31, 0x74b2',
+      'addi x31 x0 22',
+      'lw  x31 26(x31)',
+      'bgeu x31, x31, 4',
+      'bgeu x31, x31, 4',
+      'addi x31 x0 8',
+      'lw  x31 12(x31)',
+      'auipc x31, 0x4692',
+      'sltu x31, x31, x31',
       '# END OF PROGRAM',
       'lui x31, 0x20000',
   ] + [ f'sw x{i}, 0(x31)' for i in range(31) ]
-  vanilla_tests = []
-  for _test in tests:
-    if _test.startswith("# END OF PROGRAM"):
-      break
-    else:
-      vanilla_tests.append( _test )
-  # Send message to test sink to terminate the test
-  vanilla_tests.append('csrw proc2mngr, x0 > 0x00000000')
-  test = '\n'.join( tests )
-  vanilla_test = '\n'.join( vanilla_tests )
 
-  # 1MB test memory
-  th = TestHarness( 1 << 20 )
-  th.elaborate()
-
-  ref = RefTestHarness( ProcFL )
-  ref.elaborate()
-
-  mem_image = assemble( test )
-  th.load( mem_image )
-
-  vanilla_mem_image = assemble( vanilla_test )
-  ref.load( vanilla_mem_image )
-
-  th.apply( ImportPass() )
-  th.apply( SimulationPass() )
-  ref.apply( SimulationPass() )
-
-  T, maxT = 0, 40000
-
-  try:
-
-    print()
-    print('DUT processor')
-    th.sim_reset()
-    while T < maxT:
-      print(f'{T:>4}: {th.line_trace()}')
-      th.tick()
-      T += 1
-
-  except SystemExit:
-    pass
-
-  print()
-  print('Reference processor')
-  ref.sim_reset()
-  while not ref.done() and T < maxT:
-    print(f'{T:>4}: {ref.line_trace()}')
-    ref.tick()
-    T += 1
+  ref = simulate_reference_processor( tests, [] )
+  th  = simulate_pico_processor( tests, [] )
 
   check_architectural_states( th, ref )
 
 # IUT: Instructions under test
 @settings( deadline = None )
-@given( IUT =inst_random.inst_combined( 10 ) )
+@given( IUT = inst_hypothesis( maxInstr ) )
 def test_hypothesis( IUT ):
   tests, addr_list = IUT
-  vanilla_tests = []
-  for _test in tests:
-    if _test.startswith("# END OF PROGRAM"):
-      break
-    else:
-      vanilla_tests.append( _test )
 
   print()
   print('========== Current Hypothesis Test Case =========')
 
-  # Dump the generated instruction sequence
-  print()
-  print('/**** Generated Instruction Sequence ****/')
-  print('\n'.join(map(lambda x: '  '+x, vanilla_tests)))
-  print()
-  print('/**** Address List ****/')
-  print(addr_list)
-  print()
-  # Send message to test sink to terminate the test
-  vanilla_tests.append('csrw proc2mngr, x0 > 0x00000000')
-  test = '\n'.join( tests )
-  vanilla_test = '\n'.join( vanilla_tests )
-
-  th = TestHarness()
-  th.elaborate()
-
-  ref = RefTestHarness( ProcFL )
-  ref.elaborate()
-
-  mem_image = assemble( test )
-  th.load( mem_image )
-
-  vanilla_mem_image = assemble( vanilla_test )
-  ref.load( vanilla_mem_image )
-
-  th.apply( ImportPass() )
-  th.apply( SimulationPass() )
-  ref.apply( SimulationPass() )
-
-  T, maxT = 0, 40000
-
-  try:
-
-    # print()
-    # print('DUT processor')
-    th.sim_reset()
-    while T < maxT:
-      # print(f'{T:>4}: {th.line_trace()}')
-      th.tick()
-      T += 1
-
-  except SystemExit:
-    pass
-
-  # print()
-  # print('Reference processor')
-  T = 0
-  ref.sim_reset()
-  while not ref.done() and T < maxT:
-    # print(f'{T:>4}: {ref.line_trace()}')
-    ref.tick()
-    T += 1
+  ref = simulate_reference_processor( tests, addr_list )
+  th  = simulate_pico_processor( tests, addr_list )
 
   check_architectural_states( th, ref, addr_list )
+
+# Complete random test (CRT)
+def test_random():
+  # Randomly generate instructions until a falsfying example
+  # is found
+  while True:
+    tests, addr_list = inst_random( minReg, maxReg, minInstr, maxInstr )
+
+    print()
+    print('========== Current CRT Test Case =========')
+
+    ref = simulate_reference_processor( tests, addr_list )
+    th  = simulate_pico_processor( tests, addr_list )
+
+    check_architectural_states( th, ref, addr_list )
+
+# Iterative deepening test (IDT)
+def test_deepening():
+  # Incrementally search for a set of instructions
+  # until a falsfying example is found. For each set
+  # of instructions, thoroughly explore the search space.
+
+  inst_deepening = inst_deepening_gen( maxInstr )
+
+  while True:
+    tests, addr_list = next( inst_deepening )
+
+    print()
+    print('========== Current IDT Test Case =========')
+
+    ref = simulate_reference_processor( tests, addr_list )
+    th  = simulate_pico_processor( tests, addr_list )
+
+    check_architectural_states( th, ref, addr_list )

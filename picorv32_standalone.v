@@ -2259,7 +2259,10 @@ module picorv32_pcpi_mul #(
 			end else begin
 				next_rdt = 0;
 				for (j = 0; j < 64; j = j + CARRY_CHAIN)
-					{next_rdt[j+CARRY_CHAIN-1], next_rd[j +: CARRY_CHAIN]} =
+          /* BUG: forget to add -1 */
+					/* {next_rdt[j+CARRY_CHAIN-1], next_rd[j +: CARRY_CHAIN]} = */
+					/* 		next_rd[j +: CARRY_CHAIN] + next_rdx[j +: CARRY_CHAIN] + this_rs2[j +: CARRY_CHAIN]; */
+					{next_rdt[j+CARRY_CHAIN], next_rd[j +: CARRY_CHAIN]} =
 							next_rd[j +: CARRY_CHAIN] + next_rdx[j +: CARRY_CHAIN] + this_rs2[j +: CARRY_CHAIN];
 				next_rdx = next_rdt << 1;
 			end
