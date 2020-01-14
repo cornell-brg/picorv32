@@ -55,10 +55,9 @@ class PicoRV32( Component, Placeholder ):
     s.trace_valid = OutPort( Bits1 )
     s.trace_data  = OutPort( Bits36 )
 
-    # Import config
-
+  def setup_import_config( s, vl_filename ):
     s.config_sverilog_import = ImportConfigs(
-        vl_src = get_dir(__file__)+'picorv32_standalone.v',
+        vl_src = get_dir(__file__) + vl_filename,
         top_module = 'picorv32',
         vl_trace = True,
         vl_W_lint = False,

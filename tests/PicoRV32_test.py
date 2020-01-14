@@ -41,6 +41,13 @@ from .elf import elf_reader
 from ..PicoRV32 import PicoRV32
 
 #-------------------------------------------------------------------------
+# Global import state
+#-------------------------------------------------------------------------
+# Use this to only perform import on the very first run
+
+imported = False
+
+#-------------------------------------------------------------------------
 # Parameters
 #-------------------------------------------------------------------------
 
@@ -177,8 +184,9 @@ class PicoTestMemoryRTL( Component ):
     return f'{trace:>40}'
 
 class TestHarness( Component ):
-  def construct( s, mem_nbytes = 1 << 28 ):
+  def construct( s, mem_nbytes = 1 << 28, pico = 'picorv32_standalone.v' ):
     s.dut = PicoRV32()
+    s.dut.setup_import_config( pico )
     s.mem = PicoTestMemoryRTL( mem_nbytes )
 
     s.dut.resetn //= lambda: not s.reset
@@ -211,7 +219,7 @@ class TestHarness( Component ):
 # Helper functions
 #-------------------------------------------------------------------------
 
-def simulate_pico_processor( tests, addr_list ):
+def simulate_pico_processor( tests, addr_list, pico ):
   # Add epilogue to the assembly
   tests = copy( tests )
   tests.append( '# END OF PROGRAM' )
@@ -224,11 +232,20 @@ def simulate_pico_processor( tests, addr_list ):
   test = '\n'.join( tests )
 
   # 1MB test memory
-  th = TestHarness( 1 << 20 )
+  th = TestHarness( 1 << 20, pico )
   th.elaborate()
 
   mem_image = assemble( test )
   th.load( mem_image )
+
+  # Check import status
+  global imported
+
+  # Do not recompile when pico has been imported
+  if imported:
+    th.dut.config_sverilog_import.recompile = False
+  else:
+    imported = True
 
   th.apply( ImportPass() )
   th.apply( SimulationPass() )
@@ -383,67 +400,30 @@ def test_ubmark( ubmark ):
     pass
 
 def test_simple_reference():
-  tests = [
-      # 'lui x1, 0x42',
-      'sub x31, x31, x31',
-      'addi x31, x31, 0x5c06',
-      'srli x31, x31, 0xffff',
-      'addi x31, x31, 0xffff',
-      'add x31, x31, x31',
-      'auipc x31, 0x997c',
-      'sll x31, x31, x31',
-      'addi x31 x0 7',
-      'lw  x31 33(x31)',
-      'ori x31, x31, 0x83c6',
-      'bge x31, x31, 32',
-      'blt x31, x31, 64',
-      'slti x31, x31, 0x922f',
-      'lui x31, 0xb901',
-      'bgeu x31, x31, 60',
-      'lui x31, 0xc550',
-      'ori x31, x31, 0xd847',
-      'slt x31, x31, x31',
-      'addi x31, x31, 0xe7bf',
-      'auipc x31, 0x7b21',
-      'blt x31, x31, 8',
-      'addi x31, x31, 0xe23',
-      'bge x31, x31, 36',
-      'or x31, x31, x31',
-      'blt x31, x31, 4',
-      'lui x31, 0x74b2',
-      'addi x31 x0 22',
-      'lw  x31 26(x31)',
-      'bgeu x31, x31, 4',
-      'bgeu x31, x31, 4',
-      'addi x31 x0 8',
-      'lw  x31 12(x31)',
-      'auipc x31, 0x4692',
-      'sltu x31, x31, x31',
-      '# END OF PROGRAM',
-      'lui x31, 0x20000',
-  ] + [ f'sw x{i}, 0(x31)' for i in range(31) ]
+  tests = [ 'lui x1, 0x42', ]
 
   ref = simulate_reference_processor( tests, [] )
-  th  = simulate_pico_processor( tests, [] )
+  th  = simulate_pico_processor( tests, [], pico )
 
   check_architectural_states( th, ref )
 
 # IUT: Instructions under test
 @settings( deadline = None )
 @given( IUT = inst_hypothesis( maxInstr ) )
-def test_hypothesis( IUT ):
+def test_hypothesis( IUT, pico ):
   tests, addr_list = IUT
 
   print()
   print('========== Current Hypothesis Test Case =========')
 
   ref = simulate_reference_processor( tests, addr_list )
-  th  = simulate_pico_processor( tests, addr_list )
+  th  = simulate_pico_processor( tests, addr_list, pico )
 
   check_architectural_states( th, ref, addr_list )
 
 # Complete random test (CRT)
-def test_random():
+def test_random( pico ):
+  tries = 0
   # Randomly generate instructions until a falsfying example
   # is found
   while True:
@@ -453,12 +433,20 @@ def test_random():
     print('========== Current CRT Test Case =========')
 
     ref = simulate_reference_processor( tests, addr_list )
-    th  = simulate_pico_processor( tests, addr_list )
+    th  = simulate_pico_processor( tests, addr_list, pico )
 
-    check_architectural_states( th, ref, addr_list )
+    try:
+      check_architectural_states( th, ref, addr_list )
+    
+    except AssertionError:
+      print(f'  CRT tried {tries} times to find a failing test case!')
+      raise
+
+    tries += 1
 
 # Iterative deepening test (IDT)
-def test_deepening():
+def test_deepening( pico ):
+  tries = 0
   # Incrementally search for a set of instructions
   # until a falsfying example is found. For each set
   # of instructions, thoroughly explore the search space.
@@ -472,6 +460,13 @@ def test_deepening():
     print('========== Current IDT Test Case =========')
 
     ref = simulate_reference_processor( tests, addr_list )
-    th  = simulate_pico_processor( tests, addr_list )
+    th  = simulate_pico_processor( tests, addr_list, pico )
 
-    check_architectural_states( th, ref, addr_list )
+    try:
+      check_architectural_states( th, ref, addr_list )
+
+    except AssertionError:
+      print(f'  IDT tried {tries} times to find a failing test case!')
+      raise
+
+    tries += 1
