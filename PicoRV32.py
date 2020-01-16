@@ -59,7 +59,7 @@ class PicoRV32( Component, Placeholder ):
     s.config_sverilog_import = ImportConfigs(
         vl_src = get_dir(__file__) + vl_filename,
         top_module = 'picorv32',
-        vl_trace = True,
+        # vl_trace = True,
         vl_W_lint = False,
         has_reset = False,
     )

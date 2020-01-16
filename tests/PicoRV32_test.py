@@ -41,18 +41,24 @@ from .elf import elf_reader
 from ..PicoRV32 import PicoRV32
 
 #-------------------------------------------------------------------------
-# Global import state
+# Global states
 #-------------------------------------------------------------------------
-# Use this to only perform import on the very first run
 
+# Use this to only perform import on the very first run
 imported = False
+
+# Number of tests to reach the result
+nTests = 0
+
+# Result falsfying example
+resAsm = ""
 
 #-------------------------------------------------------------------------
 # Parameters
 #-------------------------------------------------------------------------
 
 # Max cycle count
-maxT = 400000
+maxT = 20000
 
 # Min instruction count
 minInstr = 2
@@ -73,6 +79,10 @@ maxReg = 31
 class TestFailError( Exception ):
   def __init__( s, msg ):
     return super().__init__( msg )
+
+class InvalidAssemblyError( Exception ):
+  def __init__( s, asm ):
+    return super().__init__( asm )
 
 #-------------------------------------------------------------------------
 # Components
@@ -212,12 +222,33 @@ class TestHarness( Component ):
       stop_addr  = section.addr + len(section.data)
       s.mem.memory.mem[start_addr:stop_addr] = section.data
 
+  def fill_memory( s, addr_list ):
+    for addr in range(0x200):
+      s.mem.memory.mem[addr] = 0xFF
+    # for addr in addr_list:
+    #   s.mem.memory.mem[addr] = addr
+
   def line_trace( s ):
     return s.mem.line_trace()
 
 #-------------------------------------------------------------------------
 # Helper functions
 #-------------------------------------------------------------------------
+
+def get_num_regs( tests ):
+  all_xs = []
+  for test in tests:
+    strs = test.split()
+    for s in strs:
+      if s.startswith('x'):
+        try:
+          _s = s[:-1] if s[-1] == ',' else s
+          int(_s[1:])
+          if _s not in all_xs:
+            all_xs.append(_s)
+        except:
+          pass
+  return len(all_xs)
 
 def simulate_pico_processor( tests, addr_list, pico ):
   # Add epilogue to the assembly
@@ -228,6 +259,9 @@ def simulate_pico_processor( tests, addr_list, pico ):
   for i in range(31):
     tests.append(f'sw x{i}, 0(x31)')
 
+  nInstr = len(tests)
+  maxT = 50 * nInstr
+
   # Test program
   test = '\n'.join( tests )
 
@@ -237,6 +271,7 @@ def simulate_pico_processor( tests, addr_list, pico ):
 
   mem_image = assemble( test )
   th.load( mem_image )
+  th.fill_memory( addr_list )
 
   # Check import status
   global imported
@@ -250,8 +285,6 @@ def simulate_pico_processor( tests, addr_list, pico ):
   th.apply( ImportPass() )
   th.apply( SimulationPass() )
 
-  T = 0
-
   try:
     # print()
     # print('DUT processor')
@@ -261,6 +294,12 @@ def simulate_pico_processor( tests, addr_list, pico ):
       # print(f'{T:>4}: {th.line_trace()}')
       th.tick()
       T += 1
+
+    # Print out in hypothesis tests
+    if T == maxT:
+      print( '  [FAILED] (time out)' )
+
+    assert T != maxT
 
   except SystemExit:
     pass
@@ -272,6 +311,7 @@ def simulate_reference_processor( tests, addr_list ):
   print()
   print('/**** Generated Instruction Sequence ****/')
   print(f'Number of instructions = {len(tests)}')
+  print(f'Number of registers used = {get_num_regs(tests)}')
   print('\n'.join(map(lambda x: '  '+x, tests)))
   print()
   print('/**** Address List ****/')
@@ -288,17 +328,23 @@ def simulate_reference_processor( tests, addr_list ):
 
   mem_image = assemble( test )
   ref.load( mem_image )
+  ref.fill_memory( addr_list )
   ref.apply( SimulationPass() )
 
-  T = 0
+  try:
+    # print()
+    # print('Reference processor')
+    T = 0
+    ref.sim_reset()
+    while not ref.done() and T < maxT:
+      # print(f'{T:>4}: {ref.line_trace()}')
+      ref.tick()
+      T += 1
 
-  # print()
-  # print('Reference processor')
-  ref.sim_reset()
-  while not ref.done() and T < maxT:
-    # print(f'{T:>4}: {ref.line_trace()}')
-    ref.tick()
-    T += 1
+    assert T != maxT
+
+  except:
+    raise InvalidAssemblyError( test )
 
   return ref
 
@@ -413,6 +459,10 @@ def test_simple_reference():
 def test_hypothesis( IUT, pico ):
   tests, addr_list = IUT
 
+  global nTests, resAsm
+  nTests += 1
+  resAsm = tests
+
   print()
   print('========== Current Hypothesis Test Case =========')
 
@@ -423,30 +473,31 @@ def test_hypothesis( IUT, pico ):
 
 # Complete random test (CRT)
 def test_random( pico ):
-  tries = 0
+  global nTests, resAsm
+
   # Randomly generate instructions until a falsfying example
   # is found
   while True:
+    nTests += 1
     tests, addr_list = inst_random( minReg, maxReg, minInstr, maxInstr )
+    resAsm = tests
 
     print()
     print('========== Current CRT Test Case =========')
 
-    ref = simulate_reference_processor( tests, addr_list )
-    th  = simulate_pico_processor( tests, addr_list, pico )
-
     try:
+      ref = simulate_reference_processor( tests, addr_list )
+      th  = simulate_pico_processor( tests, addr_list, pico )
       check_architectural_states( th, ref, addr_list )
     
     except AssertionError:
-      print(f'  CRT tried {tries} times to find a failing test case!')
+      print(f'  CRT tried {nTests} times to find a failing test case!')
       raise
-
-    tries += 1
 
 # Iterative deepening test (IDT)
 def test_deepening( pico ):
-  tries = 0
+  global nTests, resAsm
+
   # Incrementally search for a set of instructions
   # until a falsfying example is found. For each set
   # of instructions, thoroughly explore the search space.
@@ -454,19 +505,18 @@ def test_deepening( pico ):
   inst_deepening = inst_deepening_gen( maxInstr )
 
   while True:
+    nTests += 1
     tests, addr_list = next( inst_deepening )
+    resAsm = tests
 
     print()
     print('========== Current IDT Test Case =========')
 
-    ref = simulate_reference_processor( tests, addr_list )
-    th  = simulate_pico_processor( tests, addr_list, pico )
-
     try:
+      ref = simulate_reference_processor( tests, addr_list )
+      th  = simulate_pico_processor( tests, addr_list, pico )
       check_architectural_states( th, ref, addr_list )
 
     except AssertionError:
-      print(f'  IDT tried {tries} times to find a failing test case!')
+      print(f'  IDT tried {nTests} times to find a failing test case!')
       raise
-
-    tries += 1
