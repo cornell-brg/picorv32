@@ -174,7 +174,6 @@ class PicoTestMemoryRTL( Component ):
             sys.exit()
 
         else:
-          import pdb;pdb.set_trace()
           raise TestFailError(f'Test memory: invalid address {s.addr}!')
 
   def update_architectural_state( s, data ):
@@ -503,7 +502,7 @@ def test_random( pico ):
       th  = simulate_pico_processor( tests, addr_list, pico )
       check_architectural_states( th, ref, addr_list )
     
-    except AssertionError:
+    except:
       print(f'  CRT tried {nTests} times to find a failing test case!')
       raise
 
@@ -532,6 +531,6 @@ def test_deepening( pico ):
       th  = simulate_pico_processor( tests, addr_list, pico )
       check_architectural_states( th, ref, addr_list )
 
-    except AssertionError:
+    except:
       print(f'  IDT tried {nTests} times to find a failing test case!')
       raise
