@@ -68,6 +68,10 @@ def pytest_sessionfinish(session, exitstatus):
 
   nTests = PicoRV32_test.nTests
   resAsm = PicoRV32_test.resAsm
+  resAddrList = PicoRV32_test.resAddrList
+
+  # Print result to stdout
+  PicoRV32_test.dump_asm( resAsm, resAddrList )
 
   # Number of instructions
   nTrans = len(resAsm)

@@ -53,9 +53,14 @@ nTests = 0
 # Result falsfying example
 resAsm = ""
 
+# Result addr list
+resAddrList = []
+
 #-------------------------------------------------------------------------
 # Parameters
 #-------------------------------------------------------------------------
+
+verbose = False
 
 # Max cycle count
 maxT = 20000
@@ -235,6 +240,18 @@ class TestHarness( Component ):
 # Helper functions
 #-------------------------------------------------------------------------
 
+def dump_asm( tests, addr_list ):
+  # Dump the generated instruction sequence
+  print()
+  print('/**** Generated Instruction Sequence ****/')
+  print(f'Number of instructions = {len(tests)}')
+  print(f'Number of registers used = {get_num_regs(tests)}')
+  print('\n'.join(map(lambda x: '  '+x, tests)))
+  print()
+  print('/**** Address List ****/')
+  print(addr_list)
+  print()
+
 def get_num_regs( tests ):
   all_xs = []
   for test in tests:
@@ -307,16 +324,8 @@ def simulate_pico_processor( tests, addr_list, pico ):
   return th
 
 def simulate_reference_processor( tests, addr_list ):
-  # Dump the generated instruction sequence
-  print()
-  print('/**** Generated Instruction Sequence ****/')
-  print(f'Number of instructions = {len(tests)}')
-  print(f'Number of registers used = {get_num_regs(tests)}')
-  print('\n'.join(map(lambda x: '  '+x, tests)))
-  print()
-  print('/**** Address List ****/')
-  print(addr_list)
-  print()
+  if verbose:
+    dump_asm( tests, addr_list )
 
   # Send message to test sink to terminate the test
   tests = copy( tests )
@@ -459,12 +468,14 @@ def test_simple_reference():
 def test_hypothesis( IUT, pico ):
   tests, addr_list = IUT
 
-  global nTests, resAsm
+  global nTests, resAsm, resAddrList
   nTests += 1
   resAsm = tests
+  resAddrList = addr_list
 
-  print()
-  print('========== Current Hypothesis Test Case =========')
+  if verbose:
+    print()
+    print('========== Current Hypothesis Test Case =========')
 
   ref = simulate_reference_processor( tests, addr_list )
   th  = simulate_pico_processor( tests, addr_list, pico )
@@ -473,7 +484,7 @@ def test_hypothesis( IUT, pico ):
 
 # Complete random test (CRT)
 def test_random( pico ):
-  global nTests, resAsm
+  global nTests, resAsm, resAddrList
 
   # Randomly generate instructions until a falsfying example
   # is found
@@ -481,9 +492,11 @@ def test_random( pico ):
     nTests += 1
     tests, addr_list = inst_random( minReg, maxReg, minInstr, maxInstr )
     resAsm = tests
+    resAddrList = addr_list
 
-    print()
-    print('========== Current CRT Test Case =========')
+    if verbose:
+      print()
+      print('========== Current CRT Test Case =========')
 
     try:
       ref = simulate_reference_processor( tests, addr_list )
@@ -496,7 +509,7 @@ def test_random( pico ):
 
 # Iterative deepening test (IDT)
 def test_deepening( pico ):
-  global nTests, resAsm
+  global nTests, resAsm, resAddrList
 
   # Incrementally search for a set of instructions
   # until a falsfying example is found. For each set
@@ -508,9 +521,11 @@ def test_deepening( pico ):
     nTests += 1
     tests, addr_list = next( inst_deepening )
     resAsm = tests
+    resAddrList = addr_list
 
-    print()
-    print('========== Current IDT Test Case =========')
+    if verbose:
+      print()
+      print('========== Current IDT Test Case =========')
 
     try:
       ref = simulate_reference_processor( tests, addr_list )
