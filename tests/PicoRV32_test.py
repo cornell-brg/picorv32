@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from pymtl3 import *
-from pymtl3.passes.backends.sverilog import ImportPass
+from pymtl3.passes.backends.verilog import ImportPass
 from pymtl3.stdlib.fl import MemoryFL
 from pymtl3.stdlib.rtl.enrdy_queues import PipeQueue1RTL
 
@@ -50,9 +50,6 @@ has_failed = False
 
 # Hypothesis generation test case count.
 hypothesis_gen_ntest = 0
-
-# Use this to only perform import on the very first run
-imported = False
 
 # Number of tests to reach the result
 nTests = 0
@@ -296,16 +293,7 @@ def simulate_pico_processor( tests, addr_list, pico ):
   th.load( mem_image )
   th.fill_memory( addr_list )
 
-  # Check import status
-  global imported
-
-  # Do not recompile when pico has been imported
-  if imported:
-    th.dut.config_sverilog_import.recompile = False
-  else:
-    imported = True
-
-  th.apply( ImportPass() )
+  th.apply( TranslationImportPass() )
   th.apply( SimulationPass() )
 
   try:
@@ -386,7 +374,7 @@ def check_architectural_states( th, ref, addr_list = [] ):
   ref_ram = ref.mem.mem.mem
   for i in addr_list:
     if pico_ram[i] != ref_ram[i]:
-      print(f'pico_ram[{i:>8}] (pico_ram[i]) != ref_ram[{i:>8}] ({ref_ram[i]})')
+      print(f'pico_ram[{i:>8}] ({pico_ram[i]}) != ref_ram[{i:>8}] ({ref_ram[i]})')
       print('  [FAILED]')
       assert pico_ram[i] == ref_ram[i]
     else:
