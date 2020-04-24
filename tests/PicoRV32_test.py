@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from pymtl3 import *
-from pymtl3.passes.backends.verilog import ImportPass
+from pymtl3.passes.backends.verilog import VerilogPlaceholderPass, TranslationImportPass
 from pymtl3.stdlib.fl import MemoryFL
 from pymtl3.stdlib.rtl.enrdy_queues import PipeQueue1RTL
 
@@ -293,6 +293,7 @@ def simulate_pico_processor( tests, addr_list, pico ):
   th.load( mem_image )
   th.fill_memory( addr_list )
 
+  th.apply( VerilogPlaceholderPass() )
   th.apply( TranslationImportPass() )
   th.apply( SimulationPass() )
 
@@ -397,7 +398,8 @@ def test_simple():
 
   th = TestHarness()
   th.elaborate()
-  th.apply( ImportPass() )
+  th.apply( VerilogPlaceholderPass() )
+  th.apply( TranslationImportPass() )
   th.apply( SimulationPass() )
 
   # Manually load the simple memory image
@@ -430,7 +432,8 @@ def test_ubmark( ubmark ):
 
   th = TestHarness()
   th.elaborate()
-  th.apply( ImportPass() )
+  th.apply( VerilogPlaceholderPass() )
+  th.apply( TranslationImportPass() )
   th.apply( SimulationPass() )
   th.load( mem_image )
 

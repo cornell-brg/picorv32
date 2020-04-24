@@ -9,7 +9,7 @@
 from os.path import dirname
 
 from pymtl3 import *
-from pymtl3.passes.backends.verilog import VerilatorImportConfigs
+from pymtl3.passes.backends.verilog import VerilogPlaceholderConfigs, VerilatorImportConfigs
 
 class PicoRV32( Component, Placeholder ):
   def construct( s ):
@@ -57,11 +57,13 @@ class PicoRV32( Component, Placeholder ):
     s.trace_data  = OutPort( Bits36 )
 
   def setup_import_config( s, vl_filename ):
-    s.config_verilog_import = VerilatorImportConfigs(
+    s.config_placeholder = VerilogPlaceholderConfigs(
         src_file = dirname(__file__) + '/' + vl_filename,
         top_module = 'picorv32',
+        has_reset = False,
+    )
+    s.config_verilog_import = VerilatorImportConfigs(
         # vl_trace = True,
         vl_W_lint = False,
-        has_reset = False,
     )
     s.verilog_translate_import = True
