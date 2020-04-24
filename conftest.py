@@ -42,22 +42,39 @@ def pytest_cmdline_main(config):
 @pytest.hookimpl()
 def pytest_sessionfinish(session, exitstatus):
 
-  def get_imm_comlexity( asm ):
+  def get_regs( instr ):
+    s = instr.replace(',', ' ').replace('(', ' ').replace(')', ' ')
+    regs = []
+    for seg in s.split():
+      try:
+        assert seg.startswith('x')
+        regs.append(int(seg[1:]))
+      except:
+        pass
+    return regs
+
+  def get_instr_complexity( instr ):
+    # Sum of register ID
+    nregs = sum(get_regs(instr))
+    # Immediate value
     val = 0
-    asm_string = ' '.join(asm).replace(',', ' ').replace('(', ' ').replace(')', ' ')
+    asm_string = instr.replace(',', ' ').replace('(', ' ').replace(')', ' ')
     asm_string = asm_string.split()
     for s in asm_string:
       try:
         val += int(s)
       except:
         pass
-    return 0 if val == 0 else log2(val)
+    imm = 0 if val == 0 else log2(val)
+
+    return nregs + imm
 
   def get_complexity( asm ):
-    nInstr = len(asm)
-    nRegs  = PicoRV32_test.get_num_regs(asm)
-    vImm   = get_imm_comlexity(asm)
-    return float(nInstr + nRegs + vImm)
+    sum = 0
+    # Average the complexity across all instructions
+    for instr in asm:
+      sum += get_instr_complexity( instr )
+    return float(sum) / len(asm)
 
   name_map = {
       'random' : 'complete_random',
@@ -67,6 +84,7 @@ def pytest_sessionfinish(session, exitstatus):
   ds_field = name_map[testSessionKind]
 
   nTests = PicoRV32_test.nTests
+  hypothesis_nTests = PicoRV32_test.hypothesis_gen_ntest
   resAsm = PicoRV32_test.resAsm
   resAddrList = PicoRV32_test.resAddrList
 
@@ -82,9 +100,9 @@ def pytest_sessionfinish(session, exitstatus):
   # If test index is 1 in CRT then create a new json file
   if testIndex == 1 and testSessionKind == 'random':
     ds = {
-        'complete_random'     : {'ntests':[], 'ntrans':[], 'avg_v':[]},
-        'iterative_deepening' : {'ntests':[], 'ntrans':[], 'avg_v':[]},
-        'hypothesis'          : {'ntests':[], 'ntrans':[], 'avg_v':[]},
+        'complete_random'     : {'ntests':[], 'ntrans':[], 'avg_v':[], 'asm':[]},
+        'iterative_deepening' : {'ntests':[], 'ntrans':[], 'avg_v':[], 'asm':[]},
+        'hypothesis'          : {'ntests':[], 'ntrans':[], 'avg_v':[], 'asm':[]},
     }
 
   # Otherwise update the result in the json result file
@@ -92,9 +110,15 @@ def pytest_sessionfinish(session, exitstatus):
     with open(filename, 'r') as fd:
       ds = json.load(fd)
 
-  ds[ds_field]['ntests'].append(nTests)
+  # If it's hypothesis test, report the number of tests used to discover
+  # a failing test case.
+  if testSessionKind == 'hypothesis':
+    ds[ds_field]['ntests'].append(hypothesis_nTests)
+  else:
+    ds[ds_field]['ntests'].append(nTests)
   ds[ds_field]['ntrans'].append(nTrans)
   ds[ds_field]['avg_v' ].append(get_complexity(resAsm))
+  ds[ds_field]['asm'].append('\n'.join(resAsm))
 
   with open(filename, 'w') as fd:
     json.dump(ds, fd, indent = 4)

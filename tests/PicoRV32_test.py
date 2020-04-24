@@ -44,6 +44,13 @@ from ..PicoRV32 import PicoRV32
 # Global states
 #-------------------------------------------------------------------------
 
+# Has this hypothesis test failed? Use this to distinguish generation and
+# shrinking phase.
+has_failed = False
+
+# Hypothesis generation test case count.
+hypothesis_gen_ntest = 0
+
 # Use this to only perform import on the very first run
 imported = False
 
@@ -467,8 +474,10 @@ def test_simple_reference():
 def test_hypothesis( IUT, pico ):
   tests, addr_list = IUT
 
-  global nTests, resAsm, resAddrList
+  global nTests, resAsm, resAddrList, has_failed, hypothesis_gen_ntest
   nTests += 1
+  if not has_failed:
+    hypothesis_gen_ntest += 1
   resAsm = tests
   resAddrList = addr_list
 
@@ -476,10 +485,15 @@ def test_hypothesis( IUT, pico ):
     print()
     print('========== Current Hypothesis Test Case =========')
 
-  ref = simulate_reference_processor( tests, addr_list )
-  th  = simulate_pico_processor( tests, addr_list, pico )
+  try:
+    ref = simulate_reference_processor( tests, addr_list )
+    th  = simulate_pico_processor( tests, addr_list, pico )
+    check_architectural_states( th, ref, addr_list )
 
-  check_architectural_states( th, ref, addr_list )
+  except:
+    print(f'  Hypothesis tried {hypothesis_gen_ntest} times to find a failing test case!')
+    has_failed = True
+    raise
 
 # Complete random test (CRT)
 def test_random( pico ):
